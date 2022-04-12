@@ -1,10 +1,11 @@
 import os
 import cv2
-import pydload
 import logging
 import numpy as np
 import onnxruntime
 from progressbar import progressbar
+import re
+import boto3
 
 from .detector_utils import preprocess_image
 from .video_utils import get_interest_frames_from_video
@@ -30,13 +31,10 @@ class Detector:
     detection_model = None
     classes = None
 
-    def __init__(self, model_name="default"):
+    def __init__(self, checkpoint_url, classes_url):
         """
         model = Detector()
         """
-        checkpoint_url = FILE_URLS[model_name]["checkpoint"]
-        classes_url = FILE_URLS[model_name]["classes"]
-
         home = os.path.expanduser("~")
         model_folder = os.path.join(home, f".NudeNet/")
         if not os.path.exists(model_folder):
@@ -48,15 +46,23 @@ class Detector:
 
         if not os.path.exists(checkpoint_path):
             print("Downloading the checkpoint to", checkpoint_path)
-            pydload.dload(checkpoint_url, save_to_path=checkpoint_path, max_time=None)
+            self._download_model(checkpoint_url, checkpoint_path)
 
         if not os.path.exists(classes_path):
             print("Downloading the classes list to", classes_path)
-            pydload.dload(classes_url, save_to_path=classes_path, max_time=None)
+            self._download_model(classes_url, classes_path)
 
         self.detection_model = onnxruntime.InferenceSession(checkpoint_path)
 
         self.classes = [c.strip() for c in open(classes_path).readlines() if c.strip()]
+
+    def _download_model(self, s3_model, model_path):
+        s3 = boto3.client("s3")
+        bucket, prefix = re.match("s3://(.+?)/(.+)", s3_model).groups()
+        response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        for s3_obj in response["Contents"]:
+            obj_key = s3_obj["Key"]
+            s3.download_file(bucket, obj_key, model_path)
 
     def detect_video(
         self, video_path, mode="default", min_prob=0.6, batch_size=2, show_progress=True
